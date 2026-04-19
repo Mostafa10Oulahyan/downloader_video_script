@@ -151,7 +151,7 @@ def download_video(url: str, quality: str = '1080', output_path: Optional[str] =
 
     ydl_opts = {
         **COOKIE_OPTS,
-        'format': f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best',
+        'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/bestvideo+bestaudio/best',
         'outtmpl': output_template,
         'merge_output_format': 'mp4',
         'postprocessors': [{
