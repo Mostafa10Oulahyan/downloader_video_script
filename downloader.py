@@ -18,6 +18,10 @@ import json
 import argparse
 import subprocess
 from pathlib import Path
+
+# Configure cookies if file exists
+COOKIES_FILE = Path('cookies.txt')
+COOKIE_OPTS = {'cookiefile': str(COOKIES_FILE)} if COOKIES_FILE.exists() else {}
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
@@ -54,7 +58,8 @@ def get_video_info(url: str) -> Dict[str, Any]:
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-    }
+        **COOKIE_OPTS,
+}
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -145,7 +150,8 @@ def download_video(url: str, quality: str = '1080', output_path: Optional[str] =
         output_template = output_path
 
     ydl_opts = {
-        'format': f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best',
+        'format': f'bestvideo[height<={quality    **COOKIE_OPTS,
+}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best',
         'outtmpl': output_template,
         'merge_output_format': 'mp4',
         'postprocessors': [{
@@ -221,7 +227,8 @@ def download_audio(url: str, quality: str = '320', output_path: Optional[str] = 
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': quality,
-        }],
+            **COOKIE_OPTS,
+}],
         'quiet': False,
         'no_warnings': False,
         'progress_hooks': [progress_hook],
@@ -286,7 +293,8 @@ def search_videos(query: str, max_results: int = 10) -> Dict[str, Any]:
         'no_warnings': True,
         'extract_flat': True,
         'default_search': 'ytsearch',
-    }
+        **COOKIE_OPTS,
+}
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
