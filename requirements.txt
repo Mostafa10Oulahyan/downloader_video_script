@@ -1,0 +1,18 @@
+# Python Backend Requirements for URL Downloader
+
+# Core dependencies
+yt-dlp>=2024.1.0
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+python-multipart>=0.0.6
+
+# Optional but recommended
+aiofiles>=23.2.1
+python-dotenv>=1.0.0
+
+# For video processing (required by yt-dlp)
+# Note: ffmpeg must be installed separately on your system
+# Windows: winget install ffmpeg
+# macOS: brew install ffmpeg
+# Linux: sudo apt install ffmpeg
