@@ -19,8 +19,13 @@ import argparse
 import subprocess
 from pathlib import Path
 
-# Configure cookies if file exists
+# Configure cookies if file exists or if environment variable is set
 COOKIES_FILE = Path('cookies.txt')
+
+if os.environ.get('YOUTUBE_COOKIES'):
+    with open(COOKIES_FILE, 'w') as f:
+        f.write(os.environ.get('YOUTUBE_COOKIES'))
+
 COOKIE_OPTS = {'cookiefile': str(COOKIES_FILE)} if COOKIES_FILE.exists() else {}
 from datetime import datetime
 from typing import Dict, Any, Optional, List
