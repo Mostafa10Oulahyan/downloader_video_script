@@ -18,20 +18,30 @@ import json
 import argparse
 import subprocess
 from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any, Optional, List
 
 # Configure cookies if file exists or if environment variable is set
 COOKIES_FILE = Path('cookies.txt')
 
 if os.environ.get('YOUTUBE_COOKIES'):
+    cookie_content = os.environ.get('YOUTUBE_COOKIES', '')
+    # Handle escaped newlines from env vars
+    cookie_content = cookie_content.replace('\\n', '\n')
     with open(COOKIES_FILE, 'w') as f:
-        f.write(os.environ.get('YOUTUBE_COOKIES'))
+        f.write(cookie_content)
+    print(f"[Cookie] Wrote cookies from YOUTUBE_COOKIES env var ({len(cookie_content)} chars)")
 
-COOKIE_OPTS = {'cookiefile': str(COOKIES_FILE)} if COOKIES_FILE.exists() else {}
-from datetime import datetime
-from typing import Dict, Any, Optional, List
+if COOKIES_FILE.exists() and COOKIES_FILE.stat().st_size > 0:
+    COOKIE_OPTS = {'cookiefile': str(COOKIES_FILE)}
+    print(f"[Cookie] Using cookie file: {COOKIES_FILE.absolute()}")
+else:
+    COOKIE_OPTS = {}
+    print("[Cookie] No cookies configured")
 
 try:
     import yt_dlp
+    print(f"[Init] yt-dlp version: {yt_dlp.version.__version__}")
 except ImportError:
     print("ERROR: yt-dlp not installed. Run: pip install yt-dlp")
     sys.exit(1)
@@ -41,6 +51,21 @@ except ImportError:
 DOWNLOAD_DIR = Path("downloads")
 TEMP_DIR = Path("temp")
 MAX_FILE_SIZE_MB = 500  # Maximum file size to download
+
+# Common yt-dlp options for all platforms
+COMMON_OPTS = {
+    'quiet': True,
+    'no_warnings': True,
+    'socket_timeout': 30,
+    'retries': 3,
+    'fragment_retries': 3,
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+    },
+    **COOKIE_OPTS,
+}
 
 
 def ensure_directories():
@@ -60,11 +85,9 @@ def get_video_info(url: str) -> Dict[str, Any]:
         Dictionary containing video metadata
     """
     ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
+        **COMMON_OPTS,
         'extract_flat': False,
-        **COOKIE_OPTS,
-}
+    }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -103,9 +126,20 @@ def get_video_info(url: str) -> Dict[str, Any]:
                 'available_qualities': get_available_qualities(formats),
             }
     except Exception as e:
+        error_msg = str(e)
+        # Provide user-friendly error messages
+        if 'Sign in' in error_msg or 'bot' in error_msg.lower():
+            error_msg = 'YouTube requires authentication. The server cookies may have expired.'
+        elif 'login' in error_msg.lower() or 'authentication' in error_msg.lower():
+            error_msg = f'This platform requires login to access this content.'
+        elif 'not available' in error_msg.lower() or 'private' in error_msg.lower():
+            error_msg = 'This video is private or not available in the server region.'
+        elif 'Unsupported URL' in error_msg:
+            error_msg = 'This URL is not supported. Please check the link and try again.'
+
         return {
             'success': False,
-            'error': str(e),
+            'error': error_msg,
         }
 
 
@@ -127,8 +161,16 @@ def get_available_qualities(formats: List[Dict]) -> Dict[str, List[str]]:
             if tbr:
                 audio_qualities.add(f"{int(tbr)}kbps")
 
+    # If no video qualities found (e.g., TikTok single-format), add "best"
+    if not video_qualities:
+        video_qualities.add('best')
+
+    # If no audio qualities found, add defaults
+    if not audio_qualities:
+        audio_qualities = {'128kbps', '192kbps'}
+
     return {
-        'video': sorted(list(video_qualities), key=lambda x: int(x.replace('p', '')), reverse=True),
+        'video': sorted(list(video_qualities), key=lambda x: int(x.replace('p', '').replace('best', '9999')), reverse=True),
         'audio': sorted(list(audio_qualities), key=lambda x: int(x.replace('kbps', '')), reverse=True),
     }
 
@@ -139,7 +181,7 @@ def download_video(url: str, quality: str = '1080', output_path: Optional[str] =
 
     Args:
         url: Video URL
-        quality: Quality (e.g., '1080', '720', '480')
+        quality: Quality (e.g., '1080', '720', '480', 'best')
         output_path: Optional custom output path
 
     Returns:
@@ -150,13 +192,19 @@ def download_video(url: str, quality: str = '1080', output_path: Optional[str] =
     # Generate output filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if output_path is None:
-        output_template = str(DOWNLOAD_DIR / f"{timestamp}_%(title)s.%(ext)s")
+        output_template = str(DOWNLOAD_DIR / f"{timestamp}_%(title).100s.%(ext)s")
     else:
         output_template = output_path
 
+    # Build format string — handle "best" quality
+    if quality == 'best' or quality == '9999':
+        format_str = 'bestvideo+bestaudio/best'
+    else:
+        format_str = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/bestvideo+bestaudio/best'
+
     ydl_opts = {
-        **COOKIE_OPTS,
-        'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/bestvideo+bestaudio/best',
+        **COMMON_OPTS,
+        'format': format_str,
         'outtmpl': output_template,
         'merge_output_format': 'mp4',
         'postprocessors': [{
@@ -175,10 +223,13 @@ def download_video(url: str, quality: str = '1080', output_path: Optional[str] =
             # Find the downloaded file
             downloaded_file = ydl.prepare_filename(info)
 
-            # Check if file exists
+            # Check if file exists (try multiple extensions)
             if not os.path.exists(downloaded_file):
-                # Try with .mp4 extension
-                downloaded_file = os.path.splitext(downloaded_file)[0] + '.mp4'
+                for ext in ['.mp4', '.mkv', '.webm']:
+                    candidate = os.path.splitext(downloaded_file)[0] + ext
+                    if os.path.exists(candidate):
+                        downloaded_file = candidate
+                        break
 
             if os.path.exists(downloaded_file):
                 file_size = os.path.getsize(downloaded_file)
@@ -195,7 +246,7 @@ def download_video(url: str, quality: str = '1080', output_path: Optional[str] =
             else:
                 return {
                     'success': False,
-                    'error': 'Downloaded file not found',
+                    'error': 'Downloaded file not found on server',
                 }
     except Exception as e:
         return {
@@ -221,19 +272,19 @@ def download_audio(url: str, quality: str = '320', output_path: Optional[str] = 
     # Generate output filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if output_path is None:
-        output_template = str(DOWNLOAD_DIR / f"{timestamp}_%(title)s.%(ext)s")
+        output_template = str(DOWNLOAD_DIR / f"{timestamp}_%(title).100s.%(ext)s")
     else:
         output_template = output_path
 
     ydl_opts = {
+        **COMMON_OPTS,
         'format': 'bestaudio/best',
         'outtmpl': output_template,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': quality,
-            **COOKIE_OPTS,
-}],
+        }],
         'quiet': False,
         'no_warnings': False,
         'progress_hooks': [progress_hook],
@@ -294,12 +345,10 @@ def search_videos(query: str, max_results: int = 10) -> Dict[str, Any]:
         Dictionary with search results
     """
     ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
+        **COMMON_OPTS,
         'extract_flat': True,
         'default_search': 'ytsearch',
-        **COOKIE_OPTS,
-}
+    }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
